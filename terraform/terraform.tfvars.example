@@ -1,0 +1,31 @@
+# ==============================================================================
+# Terraform Variables Example
+# Copy this file to `terraform.tfvars` and customize before running `terraform apply`.
+# ==============================================================================
+
+aws_region           = "us-east-1"
+environment          = "production"
+app_name             = "fargate-api"
+
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+availability_zones   = ["us-east-1a", "us-east-1b"]
+
+# Database Configuration
+db_name              = "app_db"
+db_username          = "dbadmin"
+db_password          = "SuperSecretPassword123!"
+db_allocated_storage = 20
+db_instance_class    = "db.t3.micro"
+
+# Fargate Compute Configuration
+container_port       = 8000
+container_cpu        = 256
+container_memory     = 512
+desired_task_count   = 2
+min_task_count       = 2
+max_task_count       = 4
+
+# VPC Endpoints enable fully private task networking without NAT Gateway costs
+enable_vpc_endpoints = true
