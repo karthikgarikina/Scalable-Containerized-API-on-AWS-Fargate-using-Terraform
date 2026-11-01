@@ -41,10 +41,10 @@ The system implements a classic **three-tier architecture**, modernized for serv
   |        |                                                                        |
   |        v [Inbound HTTP (Port 80)]                                               |
   |  +---------------------------------------------------------------------------+  |
-  |  | Public Subnets (AZ-a: 10.0.1.0/24 | AZ-b: 10.0.2.0/24)                     |  |
+  |  | Public Subnets (AZ-a: 10.0.1.0/24 | AZ-b: 10.0.2.0/24)                    |  |
   |  |                                                                           |  |
   |  |   Application Load Balancer (ALB)                                         |  |
-  |  |   [ALB Security Group: Ingress Port 80 from 0.0.0.0/0]                   |  |
+  |  |   [ALB Security Group: Ingress Port 80 from 0.0.0.0/0]                    |  |
   |  +---------------------------------------------------------------------------+  |
   |                                |                                                |
   |                                v [Forwards & Balances Traffic (Port 8000)]      |

@@ -45,8 +45,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Create a dedicated non-root user and group for security
 RUN groupadd -r appgroup && useradd -r -g appgroup -d /app -s /sbin/nologin appuser
 
-# Copy application code with appropriate ownership
+# Copy application code, tests, and configuration with appropriate ownership
 COPY --chown=appuser:appgroup app/ /app/app/
+COPY --chown=appuser:appgroup tests/ /app/tests/
+COPY --chown=appuser:appgroup pytest.ini /app/pytest.ini
 
 # Switch to non-root execution
 USER appuser
