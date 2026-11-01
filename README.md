@@ -366,7 +366,7 @@ terraform validate
 ### Step 4: Provision ECR Repository First
 To deploy ECS Fargate, your container image must exist in Amazon ECR. Target the ECR resource first:
 ```bash
-terraform apply -target=aws_ecr_repository.app -auto-approve
+terraform apply -target="aws_ecr_repository.app" -auto-approve
 ```
 Retrieve the created ECR Repository URL from the output:
 ```bash
@@ -375,22 +375,43 @@ terraform output ecr_repository_url
 ```
 
 ### Step 5: Build and Push Docker Image to ECR
-1. Authenticate your local Docker daemon with AWS ECR:
-   ```bash
-   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $(terraform output -raw ecr_repository_url)
-   ```
 
-2. Build the multi-stage production image from the repository root:
-   ```bash
-   cd ..
-   docker build -t $(cd terraform && terraform output -raw ecr_repository_url):latest -f api/Dockerfile api
-   ```
+1. Authenticate your local Docker daemon with AWS ECR:
+   - **On Windows (PowerShell):**
+     ```powershell
+     $pass = aws ecr get-login-password --region us-east-1
+     docker login --username AWS --password $pass (terraform output -raw ecr_repository_url)
+     ```
+   - **On Linux / macOS (Bash):**
+     ```bash
+     aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $(terraform output -raw ecr_repository_url)
+     ```
+
+2. Build and tag the multi-stage production image from the repository root:
+   - **On Windows (PowerShell):**
+     ```powershell
+     $repoUrl = terraform output -raw ecr_repository_url
+     cd ..
+     docker build -t "${repoUrl}:latest" -f api/Dockerfile api
+     ```
+   - **On Linux / macOS (Bash):**
+     ```bash
+     REPO_URL=$(terraform output -raw ecr_repository_url)
+     cd ..
+     docker build -t "${REPO_URL}:latest" -f api/Dockerfile api
+     ```
 
 3. Push the image to ECR:
-   ```bash
-   docker push $(cd terraform && terraform output -raw ecr_repository_url):latest
-   cd terraform
-   ```
+   - **On Windows (PowerShell):**
+     ```powershell
+     docker push "${repoUrl}:latest"
+     cd terraform
+     ```
+   - **On Linux / macOS (Bash):**
+     ```bash
+     docker push "${REPO_URL}:latest"
+     cd terraform
+     ```
 
 ### Step 6: Provision Complete Infrastructure
 Now apply the remaining Terraform resources (VPC, Subnets, Gateways, Route Tables, Security Groups, RDS PostgreSQL, ALB, Target Groups, ECS Cluster, Task Definition, Service, and Auto-Scaling):
