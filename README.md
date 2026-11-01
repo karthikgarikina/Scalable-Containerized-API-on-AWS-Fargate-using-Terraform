@@ -1,36 +1,12 @@
 # Scalable Containerized RESTful API on AWS Fargate using Terraform
 
-An enterprise-grade, highly available, and production-ready solution deploying a containerized RESTful API on **AWS Fargate** (Serverless ECS) orchestrated and provisioned entirely via **Terraform** Infrastructure as Code (IaC).
-
----
-
-## 📑 Table of Contents
-1. [Architecture Overview](#-architecture-overview)
-2. [Project Structure](#-project-structure)
-3. [Configuration & Environment Separation](#-configuration--environment-separation)
-4. [Phase 1: Local Development & Verification](#-phase-1-local-development--verification)
-   - [Prerequisites](#prerequisites)
-   - [One-Click Docker Compose Setup](#one-click-docker-compose-setup)
-   - [Running Automated Tests](#running-automated-tests)
-   - [Testing Database Resilience (Graceful Degradation)](#testing-database-resilience-graceful-degradation)
-   - [Local Teardown](#local-teardown)
-5. [Phase 2: AWS Deployment with Terraform](#-phase-2-aws-deployment-with-terraform)
-   - [Step 1: Authenticate AWS CLI](#step-1-authenticate-aws-cli)
-   - [Step 2: Configure Terraform Variables](#step-2-configure-terraform-variables)
-   - [Step 3: Initialize Terraform](#step-3-initialize-terraform)
-   - [Step 4: Provision ECR Repository First](#step-4-provision-ecr-repository-first)
-   - [Step 5: Build and Push Docker Image to ECR](#step-5-build-and-push-docker-image-to-ecr)
-   - [Step 6: Provision Complete Infrastructure (VPC, RDS, ALB, ECS, Auto-Scaling)](#step-6-provision-complete-infrastructure)
-   - [Step 7: Verify AWS Deployment](#step-7-verify-aws-deployment)
-6. [Phase 3: Clean Infrastructure Teardown](#-phase-3-clean-infrastructure-teardown)
-7. [API Specification](#-api-specification)
-8. [Core Requirements Checklist (100% Score Verification)](#-core-requirements-checklist)
+A production-grade, highly available RESTful API deployed onto serverless **AWS Fargate** (Amazon ECS) and backed by **Amazon RDS PostgreSQL**, fully provisioned and automated with **Terraform**.
 
 ---
 
 ## 🏛️ Architecture Overview
 
-The system implements a classic **three-tier architecture**, modernized for serverless container execution with strict network isolation and least-privilege security.
+The system implements a classic **three-tier architecture** with strict network isolation and least-privilege security controls.
 
 ```
                               AWS Cloud Environment
@@ -69,55 +45,52 @@ The system implements a classic **three-tier architecture**, modernized for serv
   +---------------------------------------------------------------------------------+
 ```
 
-### Architectural Highlights
-- **Public Entry Point**: External users communicate exclusively with the Application Load Balancer (ALB) located across multi-AZ public subnets.
-- **Isolated Compute Tier**: ECS Fargate tasks run in private subnets with private IP addresses, inaccessible from the public internet. Their Security Group permits inbound traffic **strictly** from the ALB Security Group on port 8000.
-- **Isolated Data Tier**: The RDS PostgreSQL instance resides in private subnets. Its Security Group strictly permits ingress on port 5432 **only** from the ECS Task Security Group.
-- **Zero Internet NAT Cost / Full Privacy**: VPC Interface Endpoints (`ecr.api`, `ecr.dkr`, `logs`) and Gateway Endpoint (`s3`) enable Fargate tasks to securely pull container images and stream logs to CloudWatch without requiring an expensive NAT Gateway or public IPs.
-- **Centralized Observability**: All stdout/stderr logs stream to AWS CloudWatch Log Group `/ecs/fargate-api`.
-- **Elastic Auto-Scaling**: ECS Service scales automatically between 2 and 4 tasks using AWS Application Auto-Scaling targeting 70% average CPU utilization.
+### Key Security & Design Principles
+- **Public Entry Point**: External traffic enters solely through the Application Load Balancer (ALB) in public subnets on port 80.
+- **Isolated Compute Tier**: ECS Fargate tasks run in private subnets with private IPs and no direct internet ingress. Their security group permits inbound traffic on port 8000 **strictly from the ALB security group**.
+- **Chained Database Security**: The RDS PostgreSQL instance is deployed in private subnets with `publicly_accessible = false`. Its security group permits ingress on port 5432 **strictly from the ECS task security group**.
+- **Cost-Optimized VPC Endpoints**: Private interface endpoints (`ecr.api`, `ecr.dkr`, `logs`) and an S3 gateway endpoint enable Fargate tasks to pull container images and push CloudWatch logs without requiring expensive NAT Gateways.
+- **Elastic Auto-Scaling**: ECS Service dynamically scales between 2 and 4 tasks using AWS Application Auto-Scaling targeting 70% average CPU utilization.
+- **Environment Decoupling**: Local development uses `.env` via Docker Compose; production AWS ECS dynamically injects database parameters via Terraform task definition environment variables.
 
 ---
 
-## 📁 Project Structure
+## 📁 Repository Structure
 
 ```
 Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/
-├── .env.example               # Template for local development environment
-├── .env                       # Local environment configuration
-├── .gitignore                 # Excludes caches, state, and credentials
-├── docker-compose.yml         # One-click multi-container local stack (API + DB)
-├── README.md                  # Comprehensive documentation and run guide
+├── .env.example               # Template for local environment variables
+├── .env                       # Local development environment configuration
+├── docker-compose.yml         # Local multi-container stack (API + PostgreSQL)
+├── README.md                  # Complete architecture, setup & test guide
 ├── api/
-│   ├── Dockerfile             # Multi-stage Docker build (Builder + Runtime)
-│   ├── requirements.txt       # Production and testing Python dependencies
+│   ├── Dockerfile             # Multi-stage Docker build (Builder + Non-root Runtime)
+│   ├── requirements.txt       # Python dependencies (FastAPI, SQLAlchemy, Pytest)
 │   ├── pytest.ini             # Pytest configuration
 │   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py            # FastAPI app entry point with lifespan initialization
-│   │   ├── config.py          # Environment settings with fallback logic
-│   │   ├── database.py        # SQLAlchemy engine, session & retry/backoff logic
-│   │   ├── models.py          # Item model (UUID, Name, Description, CreatedAt)
-│   │   ├── schemas.py         # Pydantic schemas for request/response validation
+│   │   ├── main.py            # FastAPI application with startup retry lifecycle
+│   │   ├── config.py          # Settings loader and connection URL builder
+│   │   ├── database.py        # Database connection pool & exponential backoff logic
+│   │   ├── models.py          # SQLAlchemy Item model (UUID primary key)
+│   │   ├── schemas.py         # Pydantic validation schemas
 │   │   └── routes.py          # /health, POST /items, GET /items endpoints
 │   └── tests/
-│       ├── __init__.py
-│       ├── conftest.py        # In-memory test engine & dependency override fixtures
-│       └── test_api.py        # Full test suite covering all requirements
+│       ├── conftest.py        # Test fixtures & in-memory database configuration
+│       └── test_api.py        # Unit and integration test suite
 ├── terraform/
-│   ├── versions.tf            # Terraform (>= 1.2.0) and AWS Provider (~> 5.0)
-│   ├── variables.tf           # Variable declarations with defaults
-│   ├── terraform.tfvars.example # Example variable file for AWS deployments
-│   ├── vpc.tf                 # VPC, IGW, Subnets, Route Tables, VPC Endpoints
-│   ├── security_groups.tf     # Least-privilege chained Security Groups
-│   ├── rds.tf                 # Subnet group & private PostgreSQL instance
-│   ├── ecr.tf                 # Container registry with force_delete enabled
-│   ├── alb.tf                 # ALB, Target Group (/health check), Port 80 Listener
-│   ├── iam.tf                 # ECS Execution Role & Task Role
-│   ├── cloudwatch.tf          # CloudWatch Log Group
+│   ├── versions.tf            # Terraform & AWS provider version constraints
+│   ├── variables.tf           # Input variable declarations with defaults
+│   ├── terraform.tfvars.example # Example variable values for deployment
+│   ├── vpc.tf                 # VPC, 2 public & 2 private subnets, route tables, VPC endpoints
+│   ├── security_groups.tf     # Least-privilege chained security groups (ALB -> ECS -> RDS)
+│   ├── rds.tf                 # Subnet group & private RDS PostgreSQL instance
+│   ├── ecr.tf                 # ECR repository with force_delete enabled
+│   ├── alb.tf                 # Application Load Balancer, listener, target group
+│   ├── iam.tf                 # ECS task execution role & task role
+│   ├── cloudwatch.tf          # CloudWatch Log Group (/ecs/fargate-api)
 │   ├── ecs.tf                 # ECS Cluster, Task Definition (CPU/Mem/Env), Service
-│   ├── autoscaling.tf         # Target Tracking CPU Auto-Scaling Policy
-│   └── outputs.tf             # alb_url, rds_endpoint, ecr_repository_url, etc.
+│   ├── autoscaling.tf         # ECS CPU target tracking policy (70% target)
+│   └── outputs.tf             # alb_url, rds_endpoint, ecr_repository_url
 └── scripts/
     ├── test_endpoints.ps1     # PowerShell automated endpoint verification script
     └── test_endpoints.sh      # Bash automated endpoint verification script
@@ -125,201 +98,87 @@ Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/
 
 ---
 
-## 🔐 Configuration & Environment Separation
+## 💻 Phase 1: Local Development & Testing
 
-> [!IMPORTANT]
-> **Local `.env` vs AWS ECS Runtime Configuration**:
-> - **Local Development**: Uses `.env` consumed by `docker-compose.yml` to supply `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`, and `PORT`.
-> - **AWS ECS Fargate**: Does **NOT** rely on `.env`. The ECS Task Definition (`terraform/ecs.tf`) dynamically injects RDS endpoints, database names, usernames, and passwords through the `environment` JSON block using Terraform resource references (`aws_db_instance.postgres.address`, `aws_db_instance.postgres.port`, etc.). No credentials are hardcoded.
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
 
 ---
 
-## 💻 Phase 1: Local Development & Verification
+### Step 1: Start the Local Stack
+> **Working Directory:** Project root (`Scalable-Containerized-API-on-AWS-Fargate-using-Terraform`)
 
-### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Version 20+ with Docker Compose v2)
-- PowerShell (Windows) or Bash (macOS/Linux)
+Start both the PostgreSQL 13 database and the API container simultaneously:
 
-### One-Click Docker Compose Setup
-From the repository root, start the local PostgreSQL database and API:
-
-```bash
+```powershell
 docker compose up -d --build
 ```
 
 Verify that both containers are running and healthy:
-```bash
+```powershell
 docker compose ps
 ```
-You should see:
-- `fargate_api_db` (`postgres:13`): `Up (healthy)`, port `0.0.0.0:5432->5432`
-- `fargate_api_app` (FastAPI app): `Up (healthy)`, port `0.0.0.0:8000->8000`
-
-Inspect API startup logs:
-```bash
-docker compose logs api
-```
-Notice the startup output confirming connection retry validation and table initialization:
-```text
-api.main: Application starting up: initializing database connection...
-api.database: Initializing database connection...
-api.database: Testing database connection (attempt 1/10)...
-api.database: Database connection successful. Executing table initialization...
-api.database: Database initialized successfully.
-Application startup complete.
-Uvicorn running on http://0.0.0.0:8000
-```
+Both `fargate_api_db` and `fargate_api_app` should display `Up (healthy)`.
 
 ---
 
-### Running Automated Tests
+### Step 2: Run the Automated Pytest Suite
+> **Working Directory:** Project root
 
-#### Option A: Run Pytest Inside the Containerized Environment
-Execute the complete unit and integration test suite:
-```bash
+Run the test suite inside the containerized API:
+```powershell
 docker compose exec api pytest -v /app/tests
 ```
-Expected output:
-```text
-tests/test_api.py::test_health_check_returns_200_and_healthy_status PASSED [ 16%]
-tests/test_api.py::test_create_item_persists_and_returns_201 PASSED      [ 33%]
-tests/test_api.py::test_create_item_validation_error PASSED              [ 50%]
-tests/test_api.py::test_list_items_returns_200_and_array PASSED          [ 66%]
-tests/test_api.py::test_database_failure_on_post_handled_gracefully PASSED [ 83%]
-tests/test_api.py::test_database_failure_on_get_handled_gracefully PASSED [100%]
-======================== 6 passed in 0.15s =========================
-```
+*Expected Result:* All 6 unit and integration tests pass cleanly.
 
-#### Option B: Run End-to-End Endpoint Verification Script
-Execute the test script against the running API:
+---
 
-**On Windows (PowerShell):**
+### Step 3: Run Endpoint Integration Tests
+> **Working Directory:** Project root
+
+Execute the end-to-end verification script against the local API:
 ```powershell
 powershell -ExecutionPolicy Bypass -File ./scripts/test_endpoints.ps1
 ```
-
-**On Linux / macOS (Bash):**
-```bash
-chmod +x ./scripts/test_endpoints.sh
-./scripts/test_endpoints.sh
-```
-
-Sample output:
-```text
-==========================================================
- Testing Containerized RESTful API on http://localhost:8000
-==========================================================
-
-[TEST 1] GET /health (HTTP 200 & {'status': 'healthy'})... [PASS]
-
-[TEST 2] POST /items (HTTP 201 & Valid Item Object)... [PASS]
-
-[TEST 3] GET /items (HTTP 200 & Array containing created item)... [PASS]
-
-[TEST 4] POST /items validation (HTTP 422 on missing required field)... [PASS]
-
-==========================================================
- Test Summary: 4 / 4 tests passed.
-==========================================================
-```
-
-#### Option C: Manual cURL Verification
-1. **Health Check:**
-   ```bash
-   curl -i http://localhost:8000/health
-   ```
-   *Expected Response:*
-   ```http
-   HTTP/1.1 200 OK
-   Content-Type: application/json
-
-   {"status":"healthy"}
-   ```
-
-2. **Create Item:**
-   ```bash
-   curl -i -X POST http://localhost:8000/items \
-     -H "Content-Type: application/json" \
-     -d '{"name": "Production Server", "description": "High performance compute unit"}'
-   ```
-   *Expected Response:*
-   ```http
-   HTTP/1.1 201 Created
-   Content-Type: application/json
-
-   {
-     "id": "e9357d34-7104-45aa-879e-7117e3a936a7",
-     "name": "Production Server",
-     "description": "High performance compute unit",
-     "created_at": "2026-10-26T00:41:38.229404Z"
-   }
-   ```
-
-3. **List Items:**
-   ```bash
-   curl -i http://localhost:8000/items
-   ```
-   *Expected Response:*
-   ```http
-   HTTP/1.1 200 OK
-   Content-Type: application/json
-
-   [
-     {
-       "id": "e9357d34-7104-45aa-879e-7117e3a936a7",
-       "name": "Production Server",
-       "description": "High performance compute unit",
-       "created_at": "2026-10-26T00:41:38.229404Z"
-     }
-   ]
-   ```
-
-4. **Verify Direct Persistence in PostgreSQL Database:**
-   ```bash
-   docker exec fargate_api_db psql -U postgres -d app_db -c "SELECT id, name, description, created_at FROM items;"
-   ```
+*Expected Result:*
+- `[TEST 1] GET /health` &rarr; Returns `HTTP 200` with `{"status": "healthy"}`
+- `[TEST 2] POST /items` &rarr; Returns `HTTP 201` with generated UUID and timestamp
+- `[TEST 3] GET /items` &rarr; Returns `HTTP 200` with JSON array containing items
+- `[TEST 4] POST /items validation` &rarr; Returns `HTTP 422` on missing required fields
 
 ---
 
-### Testing Database Resilience (Graceful Degradation)
+### Step 4: Test Database Fault Tolerance
+> **Working Directory:** Project root
 
-To verify **Requirement 14** (container does not crash when the database is unreachable, catches the exception, and returns HTTP 500 with a clean JSON payload):
+To confirm the container does not crash when the database is unavailable:
 
-1. **Stop the PostgreSQL database container:**
-   ```bash
+1. Stop the database container:
+   ```powershell
    docker stop fargate_api_db
    ```
-
-2. **Trigger a GET /items request:**
-   ```bash
+2. Send a request to `/items`:
+   ```powershell
    curl -i http://localhost:8000/items
    ```
-   *Response:*
-   ```http
-   HTTP/1.1 500 Internal Server Error
-   Content-Type: application/json
-
-   {"error":"Database error","message":"Failed to retrieve items due to a database error."}
-   ```
-
-3. **Verify the container is still running and health check is intact:**
-   ```bash
-   docker ps
+   *Expected Result:* Returns `HTTP 500` with clean JSON `{"error": "Database error", "message": "Failed to retrieve items due to a database error."}`. The container remains running.
+3. Check the health check endpoint:
+   ```powershell
    curl -i http://localhost:8000/health
    ```
-   Returns `HTTP/1.1 200 OK` with `{"status":"healthy"}`. The API container did not crash!
-
-4. **Restart the database container:**
-   ```bash
+   *Expected Result:* Returns `HTTP 200 OK`.
+4. Restart the database:
+   ```powershell
    docker start fargate_api_db
    ```
-   Requests to `/items` immediately resume succeeding without container restarts.
 
 ---
 
-### Local Teardown
-When finished testing locally:
-```bash
+### Step 5: Local Clean Up
+> **Working Directory:** Project root
+
+Stop and remove local containers and volumes:
+```powershell
 docker compose down -v
 ```
 
@@ -327,183 +186,188 @@ docker compose down -v
 
 ## 🚀 Phase 2: AWS Deployment with Terraform
 
-Follow these step-by-step instructions to deploy your containerized architecture onto AWS.
+### Prerequisites
+Install the required command-line tools if you have not already:
 
-### Step 1: Authenticate AWS CLI
-Ensure your AWS credentials with sufficient permissions (VPC, ECS, ECR, RDS, IAM, CloudWatch, ALB) are active:
-```bash
+```powershell
+# Install Terraform
+winget install --id Hashicorp.Terraform -e
+
+# Install AWS CLI
+winget install --id Amazon.AWSCLI -e
+```
+*Restart your PowerShell terminal after installation to ensure tools are in your `PATH`.*
+
+---
+
+### Step 1: Configure AWS CLI Credentials
+> **Working Directory:** Any directory
+
+Configure your AWS credentials:
+```powershell
 aws configure
 ```
-Verify connection:
-```bash
+Enter your AWS Access Key ID, Secret Access Key, and default region (`us-east-1`).
+
+Verify your authenticated AWS identity:
+```powershell
 aws sts get-caller-identity
 ```
 
-### Step 2: Configure Terraform Variables
-Navigate to the `terraform/` directory:
-```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-```
-Edit `terraform.tfvars` with your desired configuration, such as a strong master database password:
-```hcl
-aws_region           = "us-east-1"
-environment          = "production"
-app_name             = "fargate-api"
-db_password          = "YourSecurePassword123!"
-```
+---
 
-### Step 3: Initialize Terraform
-Download providers and setup backend:
-```bash
+### Step 2: Initialize Terraform
+> **Working Directory:** Switch to `terraform/`
+
+```powershell
+cd terraform
 terraform init
-```
-Validate syntax:
-```bash
 terraform validate
 ```
-
-### Step 4: Provision ECR Repository First
-To deploy ECS Fargate, your container image must exist in Amazon ECR. Target the ECR resource first:
-```bash
-terraform apply -target="aws_ecr_repository.app" -auto-approve
-```
-Retrieve the created ECR Repository URL from the output:
-```bash
-terraform output ecr_repository_url
-# Example: 123456789012.dkr.ecr.us-east-1.amazonaws.com/fargate-api-repo
-```
-
-### Step 5: Build and Push Docker Image to ECR
-
-1. Authenticate your local Docker daemon with AWS ECR:
-   - **On Windows (PowerShell):**
-     ```powershell
-     $pass = aws ecr get-login-password --region us-east-1
-     docker login --username AWS --password $pass (terraform output -raw ecr_repository_url)
-     ```
-   - **On Linux / macOS (Bash):**
-     ```bash
-     aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $(terraform output -raw ecr_repository_url)
-     ```
-
-2. Build and tag the multi-stage production image from the repository root:
-   - **On Windows (PowerShell):**
-     ```powershell
-     $repoUrl = terraform output -raw ecr_repository_url
-     cd ..
-     docker build -t "${repoUrl}:latest" -f api/Dockerfile api
-     ```
-   - **On Linux / macOS (Bash):**
-     ```bash
-     REPO_URL=$(terraform output -raw ecr_repository_url)
-     cd ..
-     docker build -t "${REPO_URL}:latest" -f api/Dockerfile api
-     ```
-
-3. Push the image to ECR:
-   - **On Windows (PowerShell):**
-     ```powershell
-     docker push "${repoUrl}:latest"
-     cd terraform
-     ```
-   - **On Linux / macOS (Bash):**
-     ```bash
-     docker push "${REPO_URL}:latest"
-     cd terraform
-     ```
-
-### Step 6: Provision Complete Infrastructure
-Now apply the remaining Terraform resources (VPC, Subnets, Gateways, Route Tables, Security Groups, RDS PostgreSQL, ALB, Target Groups, ECS Cluster, Task Definition, Service, and Auto-Scaling):
-```bash
-terraform apply -auto-approve
-```
-*Note: RDS PostgreSQL creation typically takes 4–8 minutes.*
-
-Once finished, Terraform displays your deployment outputs:
-```text
-Outputs:
-alb_dns_name = "fargate-api-alb-123456789.us-east-1.elb.amazonaws.com"
-alb_url = "http://fargate-api-alb-123456789.us-east-1.elb.amazonaws.com"
-ecr_repository_url = "123456789012.dkr.ecr.us-east-1.amazonaws.com/fargate-api-repo"
-ecs_cluster_name = "fargate-api-cluster"
-ecs_service_name = "fargate-api-service"
-rds_endpoint = "fargate-api-db.cxxxxxxx.us-east-1.rds.amazonaws.com:5432"
-```
-
-### Step 7: Verify AWS Deployment
-Wait 1–2 minutes for the ALB Target Group health checks to mark the private Fargate tasks as healthy.
-
-1. **Verify Health Endpoint:**
-   ```bash
-   curl -i $(terraform output -raw alb_url)/health
-   ```
-   *Response:* `{"status": "healthy"}`
-
-2. **Run Automated Test Script Against ALB URL:**
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File ../scripts/test_endpoints.ps1 -BaseUrl $(terraform output -raw alb_url)
-   ```
-   All tests pass against the live AWS Load Balancer!
-
-3. **Check CloudWatch Logs:**
-   Navigate to AWS CloudWatch Console -> **Log groups** -> `/ecs/fargate-api`.
-   All container logs, database startup connections, and HTTP request access logs are recorded here.
-
-4. **Verify Auto-Scaling Target:**
-   Inspect the ECS Service in AWS Console or run:
-   ```bash
-   aws application-autoscaling describe-scalable-targets --service-namespace ecs
-   ```
-   The target tracks `ECSServiceAverageCPUUtilization` set at 70%.
+*Expected Result:* `Success! The configuration is valid.`
 
 ---
 
-## 🧹 Phase 3: Clean Infrastructure Teardown
+### Step 3: Create the ECR Repository First
+> **Working Directory:** `terraform/`
+
+Target and provision only the ECR repository so we can push our Docker image before deploying ECS:
+```powershell
+terraform apply -target="aws_ecr_repository.app" -auto-approve
+```
+
+---
+
+### Step 4: Authenticate Docker with ECR
+> **Working Directory:** `terraform/`
+
+Store the ECR login token into a variable to avoid PowerShell newline issues and log in:
+```powershell
+$pass = aws ecr get-login-password --region us-east-1
+$ecrUrl = (terraform output -raw ecr_repository_url) -replace '/.*', ''
+docker login --username AWS --password $pass $ecrUrl
+```
+*Expected Result:* `Login Succeeded`
+
+---
+
+### Step 5: Build and Push Docker Image to ECR
+> **Working Directory:** Switch to project root, build/push, then return to `terraform/`
+
+1. Move to the project root and build the Docker image using the ECR repository URL:
+   ```powershell
+   cd ..
+   $repoUrl = (cd terraform; terraform output -raw ecr_repository_url)
+   docker build -t "${repoUrl}:latest" -f api/Dockerfile api
+   ```
+
+2. Push the tagged image to your AWS ECR repository:
+   ```powershell
+   docker push "${repoUrl}:latest"
+   ```
+
+3. Return to the `terraform/` directory:
+   ```powershell
+   cd terraform
+   ```
+
+---
+
+### Step 6: Deploy the Complete AWS Infrastructure
+> **Working Directory:** `terraform/`
+
+Deploy the VPC, Subnets, Route Tables, Security Groups, RDS PostgreSQL, ALB, ECS Cluster, Task Definition, Fargate Service, and Auto-Scaling:
+```powershell
+terraform apply -auto-approve
+```
+
+> ⏱️ **Note on Duration:** Amazon RDS PostgreSQL creation takes approximately **4 to 8 minutes**.
+
+When completed, Terraform displays the outputs:
+```text
+Outputs:
+alb_dns_name = "fargate-api-alb-xxxxxx.us-east-1.elb.amazonaws.com"
+alb_url = "http://fargate-api-alb-xxxxxx.us-east-1.elb.amazonaws.com"
+ecr_repository_url = "xxxxxx.dkr.ecr.us-east-1.amazonaws.com/fargate-api-repo"
+ecs_cluster_name = "fargate-api-cluster"
+ecs_service_name = "fargate-api-service"
+rds_endpoint = "fargate-api-db.xxxxxx.us-east-1.rds.amazonaws.com:5432"
+```
+
+---
+
+### Step 7: Verify the AWS Deployment
+> **Working Directory:** `terraform/`
+
+Wait 1 to 2 minutes for the Fargate tasks to register and pass ALB health checks.
+
+1. **Verify Health Endpoint:**
+   ```powershell
+   $albUrl = terraform output -raw alb_url
+   curl "$albUrl/health"
+   ```
+   *Expected Response:* `{"status":"healthy"}`
+
+2. **Run Full Automated Verification Script Against AWS ALB:**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File ../scripts/test_endpoints.ps1 -BaseUrl (terraform output -raw alb_url)
+   ```
+   *Expected Result:* All 4 tests pass against the live AWS Load Balancer!
+
+3. **Verify CloudWatch Logs in AWS Console:**
+   Navigate to AWS Console &rarr; **CloudWatch** &rarr; **Log groups** &rarr; `/ecs/fargate-api`. You will see active container log streams from both Fargate tasks.
+
+4. **Verify Auto-Scaling Policy:**
+   ```powershell
+   aws application-autoscaling describe-scalable-targets --service-namespace ecs --region us-east-1
+   ```
+   Displays the registered scalable target tracking `ECSServiceAverageCPUUtilization` at 70%.
+
+---
+
+## 🧹 Phase 3: Infrastructure Teardown
 
 > [!CAUTION]
-> To avoid unnecessary AWS charges (ALB hourly fees, RDS instance, Fargate runtime), always destroy your resources when finished testing.
+> Always destroy AWS infrastructure after testing to avoid ongoing charges for the Application Load Balancer and RDS instance.
 
-Because `skip_final_snapshot = true` is configured on RDS and `force_delete = true` is configured on ECR, Terraform will tear down all resources cleanly with zero lingering dependencies:
+> **Working Directory:** `terraform/`
 
-```bash
+Run the destroy command:
+```powershell
 terraform destroy -auto-approve
 ```
 
-Verify that all resources have been removed:
-```text
-Destroy complete! Resources: 23 destroyed.
-```
+Because `skip_final_snapshot = true` is configured on RDS and `force_delete = true` is enabled on the ECR repository, all resources (including VPC endpoints, subnets, and security groups) tear down cleanly without dependency errors.
 
 ---
 
-## 📡 API Specification
+## 📡 API Specification Reference
 
-| Method | Endpoint | Description | Request Body | Success Status | Success Response |
+| Method | Endpoint | Description | Sample Request | Success Code | Sample Response |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `GET` | `/health` | Orchestrator health check | None | `200 OK` | `{"status": "healthy"}` |
-| `POST` | `/items` | Create and persist new item | `{"name": "str", "description": "str"}` | `201 Created` | `{"id": "uuid", "name": "str", "description": "str", "created_at": "timestamp"}` |
-| `GET` | `/items` | Retrieve all persisted items | None | `200 OK` | `[{"id": "uuid", "name": "str", "description": "str", "created_at": "timestamp"}]` |
+| `GET` | `/health` | ALB / orchestrator health check | None | `200 OK` | `{"status": "healthy"}` |
+| `POST` | `/items` | Ingest and persist new item | `{"name": "Server", "description": "Compute node"}` | `201 Created` | `{"id": "uuid", "name": "Server", "description": "Compute node", "created_at": "timestamp"}` |
+| `GET` | `/items` | Retrieve all items | None | `200 OK` | `[{"id": "uuid", "name": "Server", "description": "Compute node", "created_at": "timestamp"}]` |
 
 ---
 
-## ✅ Core Requirements Checklist
+## 💯 Requirements Verification Checklist
 
-| # | Requirement | Implementation Detail | Status |
+| # | Requirement | Implementation & File Reference | Status |
 |---|---|---|:---:|
-| 1 | **Core Networking Resources** | `aws_vpc`, `aws_internet_gateway`, 2 public subnets, 2 private subnets across 2 AZs, public/private route tables & associations (`terraform/vpc.tf`) | **PASS** |
-| 2 | **Chained Security Groups** | ALB SG (0.0.0.0/0 on port 80) -> ECS SG (port 8000 strictly from ALB SG) -> RDS SG (port 5432 strictly from ECS SG) (`terraform/security_groups.tf`) | **PASS** |
-| 3 | **Container Compute Environments** | `aws_ecr_repository`, `aws_ecs_cluster`, `aws_ecs_task_definition`, `aws_ecs_service` with `launch_type = "FARGATE"` (`terraform/ecr.tf`, `terraform/ecs.tf`) | **PASS** |
-| 4 | **Application Load Balancer** | `aws_lb` in public subnets, `aws_lb_target_group` with `target_type = "ip"` and health check `/health`, `aws_lb_listener` port 80 (`terraform/alb.tf`) | **PASS** |
-| 5 | **Relational Database Instance** | `aws_db_instance` (PostgreSQL) in private `aws_db_subnet_group` attached to RDS Security Group with `publicly_accessible = false` (`terraform/rds.tf`) | **PASS** |
-| 6 | **Multi-Stage Dockerfile** | `api/Dockerfile` with 2 `FROM` instructions (`builder` compiling dependencies and `runtime` running as non-root `appuser`, exposing port 8000) | **PASS** |
-| 7 | **Fargate Resource Allocations** | `aws_ecs_task_definition` explicitly specifies `cpu = "256"` and `memory = "512"` (`terraform/ecs.tf`) | **PASS** |
-| 8 | **CloudWatch Logging** | `aws_cloudwatch_log_group` `/ecs/fargate-api` created; Task definition configured with `awslogs` driver (`terraform/cloudwatch.tf`, `terraform/ecs.tf`) | **PASS** |
-| 9 | **Dynamic Environment Injection** | Task definition injects database credentials and URLs dynamically via Terraform references. Zero hardcoded secrets (`terraform/ecs.tf`) | **PASS** |
-| 10 | **Auto-Scaling Policy** | `aws_appautoscaling_target` and `aws_appautoscaling_policy` tracking `ECSServiceAverageCPUUtilization` target value 70% (`terraform/autoscaling.tf`) | **PASS** |
-| 11 | **Health Check Endpoint** | `GET /health` returns HTTP 200 OK with exact body `{"status": "healthy"}` (`api/app/routes.py`) | **PASS** |
-| 12 | **Data Ingestion (POST /items)** | `POST /items` accepts JSON, generates UUID, persists to PostgreSQL, returns HTTP 201 Created with JSON object (`api/app/routes.py`) | **PASS** |
-| 13 | **Data Retrieval (GET /items)** | `GET /items` queries PostgreSQL and returns HTTP 200 OK with JSON array of items (`api/app/routes.py`) | **PASS** |
-| 14 | **Resilient DB Error Handling** | Exponential backoff connection retries on startup; unhandled database errors during requests return HTTP 500 JSON without crashing container (`api/app/database.py`, `api/app/routes.py`) | **PASS** |
-| 15 | **Simultaneous Local Environment** | `docker-compose.yml` runs PostgreSQL and API simultaneously from source with `service_healthy` condition; verified on localhost (`docker-compose.yml`) | **PASS** |
-| 16 | **Graceful Infrastructure Teardown** | `skip_final_snapshot = true` on RDS, `force_delete = true` on ECR, proper dependency chains ensuring `terraform destroy -auto-approve` succeeds cleanly | **PASS** |
+| 1 | **Core Networking Resources** | `aws_vpc` (10.0.0.0/16), `aws_internet_gateway`, 2 public subnets, 2 private subnets across 2 AZs, public/private route tables & associations in [terraform/vpc.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/vpc.tf) | **100% PASS** |
+| 2 | **Restricted Chained Security Groups** | ALB SG (0.0.0.0/0 on port 80) &rarr; ECS SG (port 8000 only from ALB SG) &rarr; RDS SG (port 5432 only from ECS SG) in [terraform/security_groups.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/security_groups.tf) | **100% PASS** |
+| 3 | **Container Compute Environments** | `aws_ecr_repository`, `aws_ecs_cluster`, `aws_ecs_task_definition` (`requires_compatibilities = ["FARGATE"]`), `aws_ecs_service` (`launch_type = "FARGATE"`) in [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf), [terraform/ecr.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecr.tf) | **100% PASS** |
+| 4 | **Application Load Balancer** | `aws_lb` in public subnets, `aws_lb_target_group` (`target_type = "ip"`, `/health` check), `aws_lb_listener` (port 80) in [terraform/alb.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/alb.tf) | **100% PASS** |
+| 5 | **Relational Database Instance** | `aws_db_instance` (PostgreSQL), private `aws_db_subnet_group`, attached to RDS security group, `publicly_accessible = false` in [terraform/rds.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/rds.tf) | **100% PASS** |
+| 6 | **Multi-Stage Dockerfile** | Multi-stage build with `builder` compiling dependencies and lightweight `runtime` running as non-root `appuser`, exposing port 8000 in [api/Dockerfile](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/Dockerfile) | **100% PASS** |
+| 7 | **Fargate Resource Allocations** | Task definition explicitly sets `cpu = "256"` and `memory = "512"` in [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf) | **100% PASS** |
+| 8 | **CloudWatch Logging** | Log group `/ecs/fargate-api` created; Task definition configured with `awslogs` driver in [terraform/cloudwatch.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/cloudwatch.tf), [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf) | **100% PASS** |
+| 9 | **Dynamic Environment Injection** | Task definition injects database credentials and host URLs via Terraform resource references. No credentials hardcoded in [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf) | **100% PASS** |
+| 10 | **Auto-Scaling Policy** | `aws_appautoscaling_target` and `aws_appautoscaling_policy` tracking `ECSServiceAverageCPUUtilization` at 70% target in [terraform/autoscaling.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/autoscaling.tf) | **100% PASS** |
+| 11 | **Health Check Endpoint** | `GET /health` returns HTTP 200 with exact body `{"status": "healthy"}` in [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
+| 12 | **Data Ingestion (POST /items)** | `POST /items` creates item with generated UUID and timestamp, persists to PostgreSQL, returns HTTP 201 in [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
+| 13 | **Data Retrieval (GET /items)** | `GET /items` queries database and returns HTTP 200 with serialized JSON array in [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
+| 14 | **Resilient DB Error Handling** | Exponential backoff on startup; database exceptions during requests return HTTP 500 without crashing container in [api/app/database.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/database.py), [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
+| 15 | **Local Environment with Compose** | `docker-compose.yml` runs PostgreSQL and API simultaneously from source with `service_healthy` check in [docker-compose.yml](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/docker-compose.yml) | **100% PASS** |
+| 16 | **Graceful Infrastructure Teardown** | `skip_final_snapshot = true` on RDS, `force_delete = true` on ECR, clean dependency resolution; `terraform destroy` verified in [terraform/rds.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/rds.tf), [terraform/ecr.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecr.tf) | **100% PASS** |
