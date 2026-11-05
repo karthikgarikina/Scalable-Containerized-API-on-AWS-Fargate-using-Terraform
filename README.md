@@ -55,49 +55,6 @@ The system implements a classic **three-tier architecture** with strict network 
 
 ---
 
-## 📁 Repository Structure
-
-```
-Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/
-├── .env.example               # Template for local environment variables
-├── .env                       # Local development environment configuration
-├── docker-compose.yml         # Local multi-container stack (API + PostgreSQL)
-├── README.md                  # Complete architecture, setup & test guide
-├── api/
-│   ├── Dockerfile             # Multi-stage Docker build (Builder + Non-root Runtime)
-│   ├── requirements.txt       # Python dependencies (FastAPI, SQLAlchemy, Pytest)
-│   ├── pytest.ini             # Pytest configuration
-│   ├── app/
-│   │   ├── main.py            # FastAPI application with startup retry lifecycle
-│   │   ├── config.py          # Settings loader and connection URL builder
-│   │   ├── database.py        # Database connection pool & exponential backoff logic
-│   │   ├── models.py          # SQLAlchemy Item model (UUID primary key)
-│   │   ├── schemas.py         # Pydantic validation schemas
-│   │   └── routes.py          # /health, POST /items, GET /items endpoints
-│   └── tests/
-│       ├── conftest.py        # Test fixtures & in-memory database configuration
-│       └── test_api.py        # Unit and integration test suite
-├── terraform/
-│   ├── versions.tf            # Terraform & AWS provider version constraints
-│   ├── variables.tf           # Input variable declarations with defaults
-│   ├── terraform.tfvars.example # Example variable values for deployment
-│   ├── vpc.tf                 # VPC, 2 public & 2 private subnets, route tables, VPC endpoints
-│   ├── security_groups.tf     # Least-privilege chained security groups (ALB -> ECS -> RDS)
-│   ├── rds.tf                 # Subnet group & private RDS PostgreSQL instance
-│   ├── ecr.tf                 # ECR repository with force_delete enabled
-│   ├── alb.tf                 # Application Load Balancer, listener, target group
-│   ├── iam.tf                 # ECS task execution role & task role
-│   ├── cloudwatch.tf          # CloudWatch Log Group (/ecs/fargate-api)
-│   ├── ecs.tf                 # ECS Cluster, Task Definition (CPU/Mem/Env), Service
-│   ├── autoscaling.tf         # ECS CPU target tracking policy (70% target)
-│   └── outputs.tf             # alb_url, rds_endpoint, ecr_repository_url
-└── scripts/
-    ├── test_endpoints.ps1     # PowerShell automated endpoint verification script
-    └── test_endpoints.sh      # Bash automated endpoint verification script
-```
-
----
-
 ## 💻 Phase 1: Local Development & Testing
 
 ### Prerequisites
@@ -252,12 +209,11 @@ docker login --username AWS --password $pass $ecrUrl
 ---
 
 ### Step 5: Build and Push Docker Image to ECR
-> **Working Directory:** Switch to project root, build/push, then return to `terraform/`
+> **Working Directory:** Project root (`Scalable-Containerized-API-on-AWS-Fargate-using-Terraform`)
 
-1. Move to the project root and build the Docker image using the ECR repository URL:
+1. Read the ECR repository URL from Terraform and build the Docker image:
    ```powershell
-   cd ..
-   $repoUrl = (cd terraform; terraform output -raw ecr_repository_url)
+   $repoUrl = terraform -chdir=terraform output -raw ecr_repository_url
    docker build -t "${repoUrl}:latest" -f api/Dockerfile api
    ```
 
@@ -350,24 +306,3 @@ Because `skip_final_snapshot = true` is configured on RDS and `force_delete = tr
 | `GET` | `/items` | Retrieve all items | None | `200 OK` | `[{"id": "uuid", "name": "Server", "description": "Compute node", "created_at": "timestamp"}]` |
 
 ---
-
-## 💯 Requirements Verification Checklist
-
-| # | Requirement | Implementation & File Reference | Status |
-|---|---|---|:---:|
-| 1 | **Core Networking Resources** | `aws_vpc` (10.0.0.0/16), `aws_internet_gateway`, 2 public subnets, 2 private subnets across 2 AZs, public/private route tables & associations in [terraform/vpc.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/vpc.tf) | **100% PASS** |
-| 2 | **Restricted Chained Security Groups** | ALB SG (0.0.0.0/0 on port 80) &rarr; ECS SG (port 8000 only from ALB SG) &rarr; RDS SG (port 5432 only from ECS SG) in [terraform/security_groups.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/security_groups.tf) | **100% PASS** |
-| 3 | **Container Compute Environments** | `aws_ecr_repository`, `aws_ecs_cluster`, `aws_ecs_task_definition` (`requires_compatibilities = ["FARGATE"]`), `aws_ecs_service` (`launch_type = "FARGATE"`) in [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf), [terraform/ecr.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecr.tf) | **100% PASS** |
-| 4 | **Application Load Balancer** | `aws_lb` in public subnets, `aws_lb_target_group` (`target_type = "ip"`, `/health` check), `aws_lb_listener` (port 80) in [terraform/alb.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/alb.tf) | **100% PASS** |
-| 5 | **Relational Database Instance** | `aws_db_instance` (PostgreSQL), private `aws_db_subnet_group`, attached to RDS security group, `publicly_accessible = false` in [terraform/rds.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/rds.tf) | **100% PASS** |
-| 6 | **Multi-Stage Dockerfile** | Multi-stage build with `builder` compiling dependencies and lightweight `runtime` running as non-root `appuser`, exposing port 8000 in [api/Dockerfile](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/Dockerfile) | **100% PASS** |
-| 7 | **Fargate Resource Allocations** | Task definition explicitly sets `cpu = "256"` and `memory = "512"` in [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf) | **100% PASS** |
-| 8 | **CloudWatch Logging** | Log group `/ecs/fargate-api` created; Task definition configured with `awslogs` driver in [terraform/cloudwatch.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/cloudwatch.tf), [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf) | **100% PASS** |
-| 9 | **Dynamic Environment Injection** | Task definition injects database credentials and host URLs via Terraform resource references. No credentials hardcoded in [terraform/ecs.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecs.tf) | **100% PASS** |
-| 10 | **Auto-Scaling Policy** | `aws_appautoscaling_target` and `aws_appautoscaling_policy` tracking `ECSServiceAverageCPUUtilization` at 70% target in [terraform/autoscaling.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/autoscaling.tf) | **100% PASS** |
-| 11 | **Health Check Endpoint** | `GET /health` returns HTTP 200 with exact body `{"status": "healthy"}` in [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
-| 12 | **Data Ingestion (POST /items)** | `POST /items` creates item with generated UUID and timestamp, persists to PostgreSQL, returns HTTP 201 in [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
-| 13 | **Data Retrieval (GET /items)** | `GET /items` queries database and returns HTTP 200 with serialized JSON array in [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
-| 14 | **Resilient DB Error Handling** | Exponential backoff on startup; database exceptions during requests return HTTP 500 without crashing container in [api/app/database.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/database.py), [api/app/routes.py](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/api/app/routes.py) | **100% PASS** |
-| 15 | **Local Environment with Compose** | `docker-compose.yml` runs PostgreSQL and API simultaneously from source with `service_healthy` check in [docker-compose.yml](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/docker-compose.yml) | **100% PASS** |
-| 16 | **Graceful Infrastructure Teardown** | `skip_final_snapshot = true` on RDS, `force_delete = true` on ECR, clean dependency resolution; `terraform destroy` verified in [terraform/rds.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/rds.tf), [terraform/ecr.tf](file:///c:/Users/ABC/Desktop/GPP/Scalable-Containerized-API-on-AWS-Fargate-using-Terraform/terraform/ecr.tf) | **100% PASS** |
