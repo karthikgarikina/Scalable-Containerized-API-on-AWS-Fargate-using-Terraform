@@ -297,6 +297,12 @@ Because `skip_final_snapshot = true` is configured on RDS and `force_delete = tr
 
 ---
 
+## Video Demo
+
+https://youtu.be/nXT2sCGRKis?si=EWOdpYMpMZlWtJOZ
+
+---
+
 ## 📡 API Specification Reference
 
 | Method | Endpoint | Description | Sample Request | Success Code | Sample Response |
